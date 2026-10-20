@@ -1,5 +1,8 @@
 # Teralow
-Teralow is an open-source, Linux-first remote desktop platform intended to provide the ease of use of Parsec while offering first-class Linux hosting, native clients, browser access and a strong security model.
+### Description
+Teralow is an source-visible, Linux-first remote desktop platform intended to provide the ease of use of Parsec while offering first-class Linux hosting, native clients, browser access and a strong security model.
+### The serious bit
+Teralow's source code is publicly visible for transparency, learning, and community feedback. However, it is not currently distributed under an open source license. All rights are reserved unless explicitly stated otherwise.
 
 ## Super Early development
 Teralow is in super early development so don't go expecting greatness! I intend to have this as a fully functioning Parsec alternative for Linux.
