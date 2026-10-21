@@ -7,4 +7,6 @@ edition = "2024"
 ashpd = { version = "0.13", features = ["screencast"] }
 gstreamer = "0.25"
 gstreamer-app = "0.25"
+gstreamer-video = "0.25"
+image = { version = "0.25.10", features = ["png"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
