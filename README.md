@@ -65,9 +65,9 @@ Teralow is currently in the early stages of development. The following checklist
 | 🟢 | Wayland ScreenCast Portal | KDE screen-sharing authorisation verified |
 | 🟢 | PipeWire Remote Connection | Authorised connection successfully opened |
 | 🟢 | Capture Session Management | Start, maintain and close portal sessions |
-| 🟡 | Desktop Frame Capture | Retrieve real desktop frames through PipeWire |
-| ⚪ | Continuous Desktop Capture | Real-time frame processing |
-| ⚪ | Hardware-Accelerated Streaming | Connect desktop capture to hardware encoding |
+| 🟢 | Desktop Frame Capture | Retrieve real desktop frames through PipeWire |
+| 🟢 | Continuous Desktop Capture | Real-time frame processing |
+| 🟡 | Hardware-Accelerated Streaming | Connect desktop capture to hardware encoding |
 | ⚪ | Desktop Audio Capture | PipeWire audio integration |
 | ⚪ | Unattended Access | Secure connections without an active local user |
 | ⚪ | Login Screen Access | Remote access through supported login managers |
