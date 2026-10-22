@@ -6,26 +6,33 @@ use ashpd::enumflags2::BitFlags;
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use gstreamer_app as gst_app;
 
 use std::error::Error;
 use std::os::fd::AsRawFd;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 type CaptureResult<T> = Result<T, Box<dyn Error>>;
 
-fn measure_capture(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
+fn record_desktop(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
     gst::init()?;
 
-    println!("\n[Continuous Capture]");
+    println!("\n[NVIDIA NVENC Recording]");
     println!("Connecting to PipeWire node {node_id}...");
+
+    let filename = "teralow-nvenc-test.mvk";
 
     let description = format!(
         "pipewiresrc fd={pipewire_fd} path={node_id} \
         do-timestamp=true ! \
+        queue max-size-buffers=2 leaky=downstream ! \
         videoconvert ! \
-        video/x-raw,format=RGB ! \
-        appsink name=frame_sink sync=false max-buffers=1 drop=true"
+        videorate ! \
+        video/x-raw,format=NV12,framerate=60/1 ! \
+        nvh264enc preset=p1 tune=ultra-low-latency \
+        zerolatency=true bframes=0 bitrate=8000 ! \
+        h264parse ! \
+        matroskamux ! \
+        filesink location={filename}"
     );
 
     let element = gst::parse::launch(&description)?;
@@ -34,64 +41,56 @@ fn measure_capture(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
         .downcast::<gst::Pipeline>()
         .map_err(|_| "Failed to create GStreamer pipeline")?;
 
-    let sink = pipeline
-        .by_name("frame_sink")
-        .ok_or("Could not find frame_sink")?
-        .downcast::<gst_app::AppSink>()
-        .map_err(|_| "frame_sink is not an AppSink")?;
+    let bus = pipeline
+        .bus()
+        .ok_or("GStreamer pipeline has no message bus");
+
+    println!("Encoder: NVIDIA H.264");
+    println!("Target: 1080p / 60 FPS / 8 Mbps");
+    println!("Output: {filename}");
 
     pipeline.set_state(gst::State::Playing)?;
 
+    let vid_secs = 20;
     let result = (|| -> CaptureResult<()> {
-        let duration = Duration::from_secs(10);
-        let start = Instant::now();
+        println!("\nRecording desktop for {} seconds...", vid_secs);
+        println!("Move some windows around!");
 
-        let mut frame_count: u64 = 0;
-        let mut last_report = Instant::now();
+        std::thread::sleep(Duration::from_secs(vid_secs));
 
-        println!("Capturing for 10 seconds...");
-        println!("Move some windows around to generate activity.");
+        println!("Finishing recording...");
 
-        while start.elapsed() < duration {
-            let sample = sink.try_pull_sample(gst::ClockTime::from_mseconds(100));
+        // Ask GStreamer to finish writing the video
+        if !pipeline.send_event(gst::event::Eos::new()) {
+            return Err("Could not send end-of-stream event".into());
+        }
 
-            if let Some(sample) = sample {
-                if sample.buffer().is_some() {
-                    frame_count += 1;
+        // Wait for the file to finish being written,
+        // or for an encoder/pipeline error
+        let message = bus?.timed_pop_filtered(
+            gst::ClockTime::from_seconds(vid_secs),
+            &[gst::MessageType::Eos, gst::MessageType::Error],
+        );
+
+        match message {
+            Some(message) => match message.view() {
+                gst::MessageView::Eos(..) => {
+                    println!("Recording finalised successfully.");
+                    Ok(())
                 }
-            }
 
-            // Print a status update approx once per second
-            if last_report.elapsed() >= Duration::from_secs(1) {
-                let seconds = start.elapsed().as_secs_f64();
+                gst::MessageView::Error(error) => {
+                    Err(format!("GStreamer error: {} ({:?})", error.error(), error.debug()).into())
+                }
 
-                let average_fps = frame_count as f64 / seconds;
+                _ => Err("Unexpected GStreamer message".into()),
+            },
 
-                println!(
-                    "Elapsed: {:.1}s | Frames: {} | Average: {:.1} FPS",
-                    seconds, frame_count, average_fps
-                );
-
-                last_report = Instant::now();
-            }
+            None => Err("Timed out waiting for recording to finish".into()),
         }
-
-        let elapsed = start.elapsed().as_secs_f64();
-        let average_fps = frame_count as f64 / elapsed;
-
-        println!("\n[Capture Results]");
-        println!("Duration: {:.2} seconds", elapsed);
-        println!("Frames received: {frame_count}");
-        println!("Average delivery rate: {:.2} FPS", average_fps);
-
-        if frame_count == 0 {
-            return Err("No frames were received".into());
-        }
-
-        Ok(())
     })();
 
-    // Stop GStreamer whether the experiment passed or failed
+    // Shut down even if the recording failed
     pipeline.set_state(gst::State::Null)?;
 
     result
@@ -140,9 +139,9 @@ pub async fn start_capture() -> ashpd::Result<()> {
 
         // The portal-authorised descriptor remains alive
         // while GStreamer consumes the selected stream.
-        match measure_capture(remote_fd.as_raw_fd(), node_id) {
-            Ok(()) => println!("Continuous Capture: SUCCESS"),
-            Err(error) => eprintln!("Continuous Capture failed: {error}"),
+        match record_desktop(remote_fd.as_raw_fd(), node_id) {
+            Ok(()) => println!("NVENC Recording: SUCCESS"),
+            Err(error) => eprint!("NVENC Recording: {error}"),
         }
     }
 
