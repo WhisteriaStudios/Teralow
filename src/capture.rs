@@ -7,29 +7,29 @@ use ashpd::enumflags2::BitFlags;
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
-use gstreamer_video as gst_video;
 
 use std::error::Error;
 use std::os::fd::AsRawFd;
+use std::time::{Duration, Instant};
 
 type CaptureResult<T> = Result<T, Box<dyn Error>>;
 
-// Read a frame through GStreamer and save it as a PNG.
-fn save_first_frame(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
+fn measure_capture(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
     gst::init()?;
 
-    println!("\n[First Frame]");
-    println!("Connecting GStreamer to PipeWire node {node_id}...");
+    println!("\n[Continuous Capture]");
+    println!("Connecting to PipeWire node {node_id}...");
 
     let description = format!(
         "pipewiresrc fd={pipewire_fd} path={node_id} \
-         do-timestamp=true ! \
-         videoconvert ! \
-         video/x-raw,format=RGB ! \
-         appsink name=frame_sink sync=false max-buffers=1 drop=true"
+        do-timestamp=true ! \
+        videoconvert ! \
+        video/x-raw,format=RGB ! \
+        appsink name=frame_sink sync=false max-buffers=1 drop=true"
     );
 
     let element = gst::parse::launch(&description)?;
+
     let pipeline = element
         .downcast::<gst::Pipeline>()
         .map_err(|_| "Failed to create GStreamer pipeline")?;
@@ -42,70 +42,56 @@ fn save_first_frame(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
 
     pipeline.set_state(gst::State::Playing)?;
 
-    println!("Waiting for a desktop frame...");
-
     let result = (|| -> CaptureResult<()> {
-        let sample = sink
-            .try_pull_sample(gst::ClockTime::from_seconds(5))
-            .ok_or("No desktop frame received within 5 seconds")?;
+        let duration = Duration::from_secs(10);
+        let start = Instant::now();
 
-        let caps = sample
-            .caps()
-            .ok_or("Captured sample has no format information")?;
+        let mut frame_count: u64 = 0;
+        let mut last_report = Instant::now();
 
-        let info = gst_video::VideoInfo::from_caps(caps)?;
+        println!("Capturing for 10 seconds...");
+        println!("Move some windows around to generate activity.");
 
-        if info.format() != gst_video::VideoFormat::Rgb {
-            return Err("Expected RGB video format".into());
+        while start.elapsed() < duration {
+            let sample = sink.try_pull_sample(gst::ClockTime::from_mseconds(100));
+
+            if let Some(sample) = sample {
+                if sample.buffer().is_some() {
+                    frame_count += 1;
+                }
+            }
+
+            // Print a status update approx once per second
+            if last_report.elapsed() >= Duration::from_secs(1) {
+                let seconds = start.elapsed().as_secs_f64();
+
+                let average_fps = frame_count as f64 / seconds;
+
+                println!(
+                    "Elapsed: {:.1}s | Frames: {} | Average: {:.1} FPS",
+                    seconds, frame_count, average_fps
+                );
+
+                last_report = Instant::now();
+            }
         }
 
-        let width = info.width();
-        let height = info.height();
+        let elapsed = start.elapsed().as_secs_f64();
+        let average_fps = frame_count as f64 / elapsed;
 
-        println!("Received frame: {width}x{height}");
+        println!("\n[Capture Results]");
+        println!("Duration: {:.2} seconds", elapsed);
+        println!("Frames received: {frame_count}");
+        println!("Average delivery rate: {:.2} FPS", average_fps);
 
-        let buffer = sample
-            .buffer()
-            .ok_or("Captured sample contains no buffer")?;
-
-        let map = buffer.map_readable()?;
-        let data = map.as_slice();
-
-        // Copy each row separately to account for padding.
-        let row_bytes = width as usize * 3;
-        let stride = usize::try_from(info.stride()[0])?;
-        let offset = info.offset()[0];
-
-        if stride < row_bytes {
-            return Err("Invalid video row stride".into());
+        if frame_count == 0 {
+            return Err("No frames were received".into());
         }
-
-        let mut pixels = vec![0u8; row_bytes * height as usize];
-
-        for y in 0..height as usize {
-            let source_start = offset + y * stride;
-            let source_end = source_start + row_bytes;
-
-            let source_row = data
-                .get(source_start..source_end)
-                .ok_or("Video buffer is smaller than expected")?;
-
-            let dest_start = y * row_bytes;
-            let dest_end = dest_start + row_bytes;
-
-            pixels[dest_start..dest_end].copy_from_slice(source_row);
-        }
-
-        let filename = "teralow-first-frame.png";
-
-        image::save_buffer(filename, &pixels, width, height, image::ColorType::Rgb8)?;
-
-        println!("Screenshot saved: {filename}");
 
         Ok(())
     })();
 
-    // Always stop the pipeline, even if capturing failed.
+    // Stop GStreamer whether the experiment passed or failed
     pipeline.set_state(gst::State::Null)?;
 
     result
@@ -154,9 +140,9 @@ pub async fn start_capture() -> ashpd::Result<()> {
 
         // The portal-authorised descriptor remains alive
         // while GStreamer consumes the selected stream.
-        match save_first_frame(remote_fd.as_raw_fd(), node_id) {
-            Ok(()) => println!("First Frame: SUCCESS"),
-            Err(error) => eprintln!("First Frame failed: {error}"),
+        match measure_capture(remote_fd.as_raw_fd(), node_id) {
+            Ok(()) => println!("Continuous Capture: SUCCESS"),
+            Err(error) => eprintln!("Continuous Capture failed: {error}"),
         }
     }
 
