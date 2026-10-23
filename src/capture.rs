@@ -6,20 +6,19 @@ use ashpd::enumflags2::BitFlags;
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
+use gstreamer_app as gst_app;
 
 use std::error::Error;
 use std::os::fd::AsRawFd;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 type CaptureResult<T> = Result<T, Box<dyn Error>>;
 
-fn record_desktop(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
+fn capture_encoded_video(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
     gst::init()?;
 
-    println!("\n[NVIDIA NVENC Recording]");
-    println!("Connecting to PipeWire node {node_id}...");
-
-    let filename = "teralow-nvenc-test.mvk";
+    println!("\n[NVENC Encoded Video");
+    println!("Connecting to PipeWire node {node_id}");
 
     let description = format!(
         "pipewiresrc fd={pipewire_fd} path={node_id} \
@@ -30,70 +29,128 @@ fn record_desktop(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
         video/x-raw,format=NV12,framerate=60/1 ! \
         nvh264enc preset=p1 tune=ultra-low-latency \
         zerolatency=true bframes=0 bitrate=8000 ! \
-        h264parse ! \
-        matroskamux ! \
-        filesink location={filename}"
+        h264parse config-interval=-1 ! \
+        video/x-h264,stream-format=byte-stream,alignment=au ! \
+        appsink name=encoded_sink sync=false max-buffers=2 drop=true"
     );
 
     let element = gst::parse::launch(&description)?;
 
     let pipeline = element
         .downcast::<gst::Pipeline>()
-        .map_err(|_| "Failed to create GStreamer pipeline")?;
+        .map_err(|_| "Failed to create GStreamer Pipeline")?;
+
+    let sink = pipeline
+        .by_name("encoded_sink")
+        .ok_or("Could not find encoded_sink")?
+        .downcast::<gst_app::AppSink>()
+        .map_err(|_| "encoded_sink is not an AppSink")?;
 
     let bus = pipeline
         .bus()
-        .ok_or("GStreamer pipeline has no message bus");
-
-    println!("Encoder: NVIDIA H.264");
-    println!("Target: 1080p / 60 FPS / 8 Mbps");
-    println!("Output: {filename}");
+        .ok_or("GStreamer pipeline has no message bus")?;
 
     pipeline.set_state(gst::State::Playing)?;
 
-    let vid_secs = 20;
+    let total_sec = 20;
+
     let result = (|| -> CaptureResult<()> {
-        println!("\nRecording desktop for {} seconds...", vid_secs);
-        println!("Move some windows around!");
+        let duration = Duration::from_secs(total_sec);
+        let start = Instant::now();
+        let mut last_repot = Instant::now();
 
-        std::thread::sleep(Duration::from_secs(vid_secs));
+        let mut buffer_count: u64 = 0;
+        let mut total_bytes: u64 = 0;
+        let mut keyframe_candidates: u64 = 0;
 
-        println!("Finishing recording...");
+        println!("Receiving H.264 video buffers for {total_sec} seconds");
 
-        // Ask GStreamer to finish writing the video
-        if !pipeline.send_event(gst::event::Eos::new()) {
-            return Err("Could not send end-of-stream event".into());
+        while start.elapsed() < duration {
+            // Look for encoder or pipeline error
+            if let Some(message) = bus.timed_pop_filtered(
+                gst::ClockTime::ZERO,
+                &[gst::MessageType::Error, gst::MessageType::Eos],
+            ) {
+                match message.view() {
+                    gst::MessageView::Error(error) => {
+                        return Err(format!(
+                            "GStreamer error: {} ({:?})",
+                            error.error(),
+                            error.debug()
+                        )
+                        .into());
+                    }
+
+                    gst::MessageView::Eos(..) => {
+                        return Err("Video stream ended unexpectedly".into());
+                    }
+
+                    _ => {}
+                }
+            }
+
+            // Request the next compressed video sample
+            let sample = sink.try_pull_sample(gst::ClockTime::from_mseconds(100));
+
+            if let Some(sample) = sample {
+                if let Some(buffer) = sample.buffer() {
+                    // Map the encoded bytes into readable memory
+                    let map = buffer.map_readable()?;
+                    let encoded_bytes = map.as_slice();
+
+                    buffer_count += 1;
+                    total_bytes += encoded_bytes.len() as u64;
+
+                    if !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT) {
+                        keyframe_candidates += 1;
+                    }
+                }
+            }
+
+            // Report stats once a second
+            if last_repot.elapsed() >= Duration::from_secs(1) {
+                let elapsed = start.elapsed().as_secs_f64();
+
+                let average_rate = buffer_count as f64 / elapsed;
+
+                let bitrate_mbps = total_bytes as f64 * 8.0 / elapsed / 1_000_000.0;
+
+                println!(
+                    "Elapsed: {:.1}s | Buffers: {} | Rate: {:.1}/s | Bitrate: {:.2} Mbps",
+                    elapsed, buffer_count, average_rate, bitrate_mbps
+                );
+
+                last_repot = Instant::now();
+            }
         }
 
-        // Wait for the file to finish being written,
-        // or for an encoder/pipeline error
-        let message = bus?.timed_pop_filtered(
-            gst::ClockTime::from_seconds(vid_secs),
-            &[gst::MessageType::Eos, gst::MessageType::Error],
+        let elapsed = start.elapsed().as_secs_f64();
+
+        if buffer_count == 0 {
+            return Err("No encoded H.264 buffers received".into());
+        }
+
+        println!("\n[Encoded Video Results]");
+        println!("Duration: {:.2}s", elapsed);
+        println!("Buffers received: {buffer_count}");
+        println!("Total encoded bytes: {total_bytes}");
+        println!("Keyframe candidates: {keyframe_candidates}");
+
+        println!(
+            "Average bitrate: {:.2} Mbps",
+            total_bytes as f64 * 8.0 / elapsed / 1_000_000.0
         );
 
-        match message {
-            Some(message) => match message.view() {
-                gst::MessageView::Eos(..) => {
-                    println!("Recording finalised successfully.");
-                    Ok(())
-                }
-
-                gst::MessageView::Error(error) => {
-                    Err(format!("GStreamer error: {} ({:?})", error.error(), error.debug()).into())
-                }
-
-                _ => Err("Unexpected GStreamer message".into()),
-            },
-
-            None => Err("Timed out waiting for recording to finish".into()),
-        }
+        Ok(())
     })();
 
-    // Shut down even if the recording failed
-    pipeline.set_state(gst::State::Null)?;
+    // Release Gstreamer resources, even if capture fails
+    let shutdown_result = pipeline.set_state(gst::State::Null);
 
-    result
+    result?;
+    shutdown_result?;
+
+    Ok(())
 }
 
 pub async fn start_capture() -> ashpd::Result<()> {
@@ -139,9 +196,9 @@ pub async fn start_capture() -> ashpd::Result<()> {
 
         // The portal-authorised descriptor remains alive
         // while GStreamer consumes the selected stream.
-        match record_desktop(remote_fd.as_raw_fd(), node_id) {
-            Ok(()) => println!("NVENC Recording: SUCCESS"),
-            Err(error) => eprint!("NVENC Recording: {error}"),
+        match capture_encoded_video(remote_fd.as_raw_fd(), node_id) {
+            Ok(()) => println!("Encoded Capture: SUCCESS"),
+            Err(error) => eprintln!("Encoded Capture failed: {error}"),
         }
     }
 
