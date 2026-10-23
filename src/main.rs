@@ -2,8 +2,9 @@ use std::fs; // For file system operations
 use std::process::Command; // For executing system commands
 use std::thread; // For multithreading
 
-mod capture;
-mod encoder; // Import the encoder module // Import the capture module
+mod capture; // Import the capture.rs module
+mod encoder; // Import the encoder.rs module
+mod network; // Import the network.rs module
 
 #[tokio::main]
 async fn main() {
@@ -64,6 +65,35 @@ async fn main() {
 
     if let Err(error) = capture::start_capture().await {
         eprintln!("Screen capture failed: {error}");
+    }
+
+    let args: Vec<String> = std::env::args().collect();
+
+    match args.get(1).map(String::as_str) {
+        Some("host") => {
+            let address = args.get(2).map(String::as_str).unwrap_or("127.0.0.1:4777");
+
+            if let Err(error) = network::start_host(address).await {
+                eprintln!("Host error: {error}");
+            }
+
+            return;
+        }
+
+        Some("connect") => {
+            let Some(address) = args.get(2) else {
+                eprintln!("Usage: teralow connect ,ip:port.");
+                return;
+            };
+
+            if let Err(error) = network::connect_to_host(address).await {
+                eprintln!("Connection error: {error}");
+            }
+
+            return;
+        }
+
+        _ => {}
     }
 }
 
