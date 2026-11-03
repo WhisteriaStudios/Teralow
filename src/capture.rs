@@ -52,7 +52,7 @@ fn capture_encoded_video(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
 
     pipeline.set_state(gst::State::Playing)?;
 
-    let total_sec = 20;
+    let total_sec = 2;
 
     let result = (|| -> CaptureResult<()> {
         let duration = Duration::from_secs(total_sec);

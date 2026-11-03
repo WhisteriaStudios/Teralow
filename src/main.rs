@@ -8,6 +8,35 @@ mod network; // Import the network.rs module
 
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    match args.get(1).map(String::as_str) {
+        Some("host") => {
+            let address = args.get(2).map(String::as_str).unwrap_or("127.0.0.1:4777");
+
+            if let Err(error) = network::start_host(address).await {
+                eprintln!("Host error: {error}");
+            }
+
+            return;
+        }
+
+        Some("connect") => {
+            let Some(address) = args.get(2) else {
+                eprintln!("Usage: teralow connect ,ip:port.");
+                return;
+            };
+
+            if let Err(error) = network::connect_to_host(address).await {
+                eprintln!("Connection error: {error}");
+            }
+
+            return;
+        }
+
+        _ => {}
+    }
+
     // Program information
 
     let name = "Teralow"; // Name of the program
@@ -65,35 +94,6 @@ async fn main() {
 
     if let Err(error) = capture::start_capture().await {
         eprintln!("Screen capture failed: {error}");
-    }
-
-    let args: Vec<String> = std::env::args().collect();
-
-    match args.get(1).map(String::as_str) {
-        Some("host") => {
-            let address = args.get(2).map(String::as_str).unwrap_or("127.0.0.1:4777");
-
-            if let Err(error) = network::start_host(address).await {
-                eprintln!("Host error: {error}");
-            }
-
-            return;
-        }
-
-        Some("connect") => {
-            let Some(address) = args.get(2) else {
-                eprintln!("Usage: teralow connect ,ip:port.");
-                return;
-            };
-
-            if let Err(error) = network::connect_to_host(address).await {
-                eprintln!("Connection error: {error}");
-            }
-
-            return;
-        }
-
-        _ => {}
     }
 }
 
