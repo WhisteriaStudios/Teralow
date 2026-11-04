@@ -81,3 +81,75 @@ pub async fn connect_to_host(address: &str) -> NetworkResult<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[tokio::test]
+    async fn valid_client_greeting_accepted() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+
+        let address = listener.local_addr().unwrap();
+
+        let host = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+
+            handle_connection(&mut stream).await.unwrap();
+        });
+
+        let mut client = TcpStream::connect(address).await.unwrap();
+
+        client.write_all(CLIENT_HELLO).await.unwrap();
+
+        let mut response = [0u8; 8];
+        client.read_exact(&mut response).await.unwrap();
+
+        assert_eq!(&response, HOST_HELLO);
+
+        host.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_client_greeting_is_rejected() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+
+        let address = listener.local_addr().unwrap();
+
+        let host = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+
+            assert!(handle_connection(&mut stream).await.is_err());
+        });
+
+        let mut client = TcpStream::connect(address).await.unwrap();
+
+        client.write_all(b"INVALID!").await.unwrap();
+        client.shutdown().await.unwrap();
+
+        host.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn silent_client_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+
+        let address = listener.local_addr().unwrap();
+
+        let host = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+
+            handle_connection(&mut stream).await
+        });
+
+        let _client = TcpStream::connect(address).await.unwrap();
+
+        let result = host.await.unwrap();
+
+        assert!(
+            result.is_err(),
+            "An unresponsive client should be rejected."
+        );
+    }
+}

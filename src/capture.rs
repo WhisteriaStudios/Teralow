@@ -92,18 +92,18 @@ fn capture_encoded_video(pipewire_fd: i32, node_id: u32) -> CaptureResult<()> {
             // Request the next compressed video sample
             let sample = sink.try_pull_sample(gst::ClockTime::from_mseconds(100));
 
-            if let Some(sample) = sample {
-                if let Some(buffer) = sample.buffer() {
-                    // Map the encoded bytes into readable memory
-                    let map = buffer.map_readable()?;
-                    let encoded_bytes = map.as_slice();
+            if let Some(sample) = sample
+                && let Some(buffer) = sample.buffer()
+            {
+                // Map the encoded bytes into readable memory
+                let map = buffer.map_readable()?;
+                let encoded_bytes = map.as_slice();
 
-                    buffer_count += 1;
-                    total_bytes += encoded_bytes.len() as u64;
+                buffer_count += 1;
+                total_bytes += encoded_bytes.len() as u64;
 
-                    if !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT) {
-                        keyframe_candidates += 1;
-                    }
+                if !buffer.flags().contains(gst::BufferFlags::DELTA_UNIT) {
+                    keyframe_candidates += 1;
                 }
             }
 

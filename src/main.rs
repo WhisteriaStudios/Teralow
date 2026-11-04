@@ -115,10 +115,10 @@ fn get_cpu_info() -> String {
     let contents = fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
 
     for line in contents.lines() {
-        if let Some((key, value)) = line.split_once(':') {
-            if key.trim() == "model name" {
-                return value.trim().to_string();
-            }
+        if let Some((key, value)) = line.split_once(':')
+            && key.trim() == "model name"
+        {
+            return value.trim().to_string();
         }
     }
 
@@ -130,12 +130,11 @@ fn get_total_ram() -> f64 {
     let contents = fs::read_to_string("/proc/meminfo").unwrap_or_default();
 
     for line in contents.lines() {
-        if line.starts_with("MemTotal:") {
-            if let Some(value) = line.split_whitespace().nth(1) {
-                if let Ok(kib) = value.parse::<f64>() {
-                    return kib / 1024.0 / 1024.0;
-                }
-            }
+        if line.starts_with("MemTotal:")
+            && let Some(value) = line.split_whitespace().nth(1)
+            && let Ok(kib) = value.parse::<f64>()
+        {
+            return kib / 1024.0 / 1024.0;
         }
     }
 
