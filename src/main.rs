@@ -4,7 +4,8 @@ use std::thread; // For multithreading
 
 mod capture; // Import the capture.rs module
 mod encoder; // Import the encoder.rs module
-mod network; // Import the network.rs module
+mod identity;
+mod network; // Import the network.rs module // Import the identity.rs module
 
 #[tokio::main]
 async fn main() {
